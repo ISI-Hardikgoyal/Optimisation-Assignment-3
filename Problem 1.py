@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
 # Set random seed for reproducibility
 np.random.seed(42)
 
