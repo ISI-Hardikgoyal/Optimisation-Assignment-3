@@ -1,215 +1,180 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import os
+import requests
+from io import StringIO
+import math
 
-# Function to load data from CSV
-def load_data(filepath):
-    """Load data from CSV file downloaded from Google Sheets"""
+# Function to download and prepare the dataset
+def load_data():
+    url = "https://docs.google.com/spreadsheets/d/13CmIStaYtiQqR_dhBPrkHJINvVln9cepHypNinVQT3c/export?format=csv&gid=2023320122"
+    
     try:
-        # Try to load data assuming it's a CSV file
-        data = pd.read_csv(filepath)
-        # Extract the first column (assuming that's where the data is)
-        x_values = data.iloc[:, 0].values
-        return x_values
+        # Try to download the data
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        
+        # Parse the CSV data
+        csv_data = StringIO(response.text)
+        df = pd.read_csv(csv_data)
+        
+        # Extract the data
+        data = df.values.flatten()  # Convert to 1D array
+        
+        return data
+    
     except Exception as e:
         print(f"Error loading data: {e}")
-        print("If you haven't downloaded the data yet, please download it from the Google Sheets link as a CSV file.")
-        print("If you're using a different format, please adjust the filepath and loading method.")
-        return None
+        # Create some dummy data if loading fails
+        print("Generating dummy data instead...")
+        np.random.seed(42)
+        data = np.random.normal(5, 2, 100)  # Generate normally distributed data
+        return data
 
-# Define the negative log-likelihood function for normal distribution
-def negative_log_likelihood(params, data):
-    """
-    Calculate negative log-likelihood for normal distribution
-    params[0] = mu (mean)
-    params[1] = sigma (standard deviation)
-    """
+# Negative log-likelihood function for normal distribution
+def cost_function(params, data):
     mu, sigma = params
     n = len(data)
-    return n * np.log(sigma) + np.sum((data - mu)**2) / (2 * sigma**2)
+    
+    # Ensure sigma is positive
+    if sigma <= 0:
+        return float('inf')
+    
+    # Compute negative log-likelihood
+    log_likelihood = n * np.log(sigma) + np.sum((data - mu)**2) / (2 * sigma**2)
+    
+    return log_likelihood
 
-# Define the gradient of the negative log-likelihood
+# Gradient of the negative log-likelihood function
 def gradient(params, data):
-    """
-    Calculate gradient of negative log-likelihood
-    Returns [d/dmu, d/dsigma]
-    """
     mu, sigma = params
     n = len(data)
     
-    # Gradient with respect to mu
-    d_mu = -np.sum(data - mu) / (sigma**2)
+    # Ensure sigma is positive
+    if sigma <= 0:
+        return np.array([0, 0])  # Return zero gradient if sigma is invalid
     
-    # Gradient with respect to sigma
-    d_sigma = n / sigma - np.sum((data - mu)**2) / (sigma**3)
+    # Compute gradients
+    grad_mu = -np.sum(data - mu) / (sigma**2)
+    grad_sigma = n / sigma - np.sum((data - mu)**2) / (sigma**3)
     
-    return np.array([d_mu, d_sigma])
+    return np.array([grad_mu, grad_sigma])
 
-# Implement gradient descent
-def gradient_descent(params_init, data, step_size, threshold, max_iterations=10000):
-    """
-    Perform gradient descent to minimize negative log-likelihood
-    
-    Args:
-        params_init: Initial parameters [mu, sigma]
-        data: Dataset
-        step_size: Learning rate
-        threshold: Convergence threshold for gradient norm
-        max_iterations: Maximum number of iterations
-        
-    Returns:
-        params_history: History of parameters
-        nll_history: History of negative log-likelihood values
-        grad_norm_history: History of gradient norms
-        iterations: Number of iterations performed
-    """
+# Gradient descent implementation
+def gradient_descent(data, params_init, eta, epsilon, max_iterations=10000):
     params = params_init.copy()
-    iterations = 0
+    cost_history = []
     params_history = [params.copy()]
-    nll_history = [negative_log_likelihood(params, data)]
-    grad_norm_history = []
     
-    while iterations < max_iterations:
+    for i in range(max_iterations):
+        # Calculate current cost
+        current_cost = cost_function(params, data)
+        cost_history.append(current_cost)
+        
+        # Calculate gradient
         grad = gradient(params, data)
         grad_norm = np.linalg.norm(grad)
-        grad_norm_history.append(grad_norm)
         
-        if grad_norm < threshold:
-            print(f"Converged after {iterations} iterations!")
+        # Check convergence
+        if grad_norm < epsilon:
+            print(f"Converged after {i+1} iterations. Gradient norm: {grad_norm:.8f}")
             break
-            
+        
         # Update parameters
-        params = params - step_size * grad
+        params = params - eta * grad
         
         # Ensure sigma remains positive
         params[1] = max(params[1], 1e-10)
         
         params_history.append(params.copy())
-        nll_history.append(negative_log_likelihood(params, data))
-        iterations += 1
         
-        # Print progress every 1000 iterations
-        if iterations % 1000 == 0:
-            print(f"Iteration {iterations}, NLL: {nll_history[-1]:.4f}, Gradient norm: {grad_norm:.6f}")
+        # Optional: print progress every 100 iterations
+        if (i+1) % 100 == 0:
+            print(f"Iteration {i+1}: Cost = {current_cost:.6f}, Gradient norm = {grad_norm:.6f}")
+            print(f"Current parameters: mu = {params[0]:.6f}, sigma = {params[1]:.6f}")
     
-    return np.array(params_history), np.array(nll_history), np.array(grad_norm_history), iterations
+    if i == max_iterations - 1:
+        print(f"Maximum iterations ({max_iterations}) reached. Gradient norm: {grad_norm:.8f}")
+    
+    return params, cost_history, np.array(params_history)
 
-def main():
-    # Load data - replace with your actual file path
-    filepath = "normal_data.csv"  # You'll need to download the Google Sheet as CSV
+# Function to plot results
+def plot_results(cost_history, params_history, data):
+    # Plot 1: Cost vs iterations
+    plt.figure(figsize=(15, 5))
     
-    # Check if file exists
-    if not os.path.exists(filepath):
-        print(f"File {filepath} not found!")
-        print("Please download the data from the Google Sheets link and save it as 'normal_data.csv' in the same directory as this script.")
-        # For demonstration, generate some random data
-        print("Generating random data for demonstration...")
-        np.random.seed(42)
-        data = np.random.normal(loc=5, scale=2, size=100)
-    else:
-        data = load_data(filepath)
-        
-    if data is None:
-        print("Using randomly generated data for demonstration...")
-        np.random.seed(42)
-        data = np.random.normal(loc=5, scale=2, size=100)
-    
-    # Parameters for gradient descent
-    params_init = np.array([0, 1])  # Initial mu=0, sigma=1
-    step_size = 0.01
-    threshold = 1e-5
-    
-    print(f"Data summary: Mean = {np.mean(data):.4f}, Std = {np.std(data):.4f}")
-    print(f"Initial parameters: mu = {params_init[0]}, sigma = {params_init[1]}")
-    print(f"Starting gradient descent with step size = {step_size}, threshold = {threshold}")
-    
-    # Run gradient descent
-    params_history, nll_history, grad_norm_history, iterations = gradient_descent(
-        params_init, data, step_size, threshold
-    )
-    
-    # Print results
-    final_mu, final_sigma = params_history[-1]
-    print("\nResults:")
-    print(f"Total iterations: {iterations}")
-    print(f"Final parameters: mu = {final_mu:.6f}, sigma = {final_sigma:.6f}")
-    print(f"Final negative log-likelihood: {nll_history[-1]:.6f}")
-    print(f"Final gradient norm: {grad_norm_history[-1]:.6f}")
-    
-    # Calculate analytical solution for comparison
-    analytical_mu = np.mean(data)
-    analytical_sigma = np.std(data, ddof=0)  # Using population standard deviation
-    analytical_nll = negative_log_likelihood([analytical_mu, analytical_sigma], data)
-    print("\nAnalytical solution:")
-    print(f"mu = {analytical_mu:.6f}, sigma = {analytical_sigma:.6f}")
-    print(f"Negative log-likelihood: {analytical_nll:.6f}")
-    
-    # Plot the negative log-likelihood vs. iterations
-    plt.figure(figsize=(10, 4))
-    plt.subplot(1, 2, 1)
-    plt.plot(range(len(nll_history)), nll_history)
+    # Plot cost history
+    plt.subplot(1, 3, 1)
+    plt.plot(cost_history)
+    plt.title('Cost vs Iterations')
     plt.xlabel('Iterations')
     plt.ylabel('Negative Log-Likelihood')
-    plt.title('NLL vs. Iterations')
     plt.grid(True)
     
-    # Plot the gradient norm vs. iterations
-    plt.subplot(1, 2, 2)
-    plt.plot(range(len(grad_norm_history)), grad_norm_history)
-    plt.xlabel('Iterations')
-    plt.ylabel('Gradient Norm')
-    plt.title('Gradient Norm vs. Iterations')
-    plt.grid(True)
-    plt.tight_layout()
-    
-    # Plot the parameter trajectory
-    plt.figure(figsize=(10, 8))
-    
-    # Create a meshgrid for contour plot
-    mu_range = np.linspace(final_mu - 3, final_mu + 3, 100)
-    sigma_range = np.linspace(max(0.1, final_sigma - 3), final_sigma + 3, 100)
-    MU, SIGMA = np.meshgrid(mu_range, sigma_range)
-    NLL = np.zeros_like(MU)
-    
-    # Calculate NLL values for contour plot
-    for i in range(len(mu_range)):
-        for j in range(len(sigma_range)):
-            NLL[j, i] = negative_log_likelihood([MU[j, i], SIGMA[j, i]], data)
-    
-    # Plot contour and parameter trajectory
-    contour = plt.contour(MU, SIGMA, NLL, levels=50, cmap='viridis')
-    plt.colorbar(contour, label='Negative Log-Likelihood')
-    plt.plot(params_history[:, 0], params_history[:, 1], 'r.-', linewidth=1, markersize=3)
-    plt.plot(params_history[0, 0], params_history[0, 1], 'go', markersize=10, label='Initial Parameters')
-    plt.plot(params_history[-1, 0], params_history[-1, 1], 'mo', markersize=10, label='Final Parameters')
-    plt.plot(analytical_mu, analytical_sigma, 'b*', markersize=10, label='Analytical Solution')
-    plt.xlabel('μ (Mean)')
-    plt.ylabel('σ (Standard Deviation)')
-    plt.title('Parameter Trajectory in Gradient Descent')
+    # Plot 2: Parameters path
+    plt.subplot(1, 3, 2)
+    plt.plot(params_history[:, 0], params_history[:, 1], 'g-', alpha=0.5)
+    plt.plot(params_history[0, 0], params_history[0, 1], 'go', label='Start')
+    plt.plot(params_history[-1, 0], params_history[-1, 1], 'r*', label='End')
+    plt.title('Optimization Path')
+    plt.xlabel('μ')
+    plt.ylabel('σ')
     plt.legend()
     plt.grid(True)
     
-    # Plot the data histogram with fitted normal distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(data, bins=30, density=True, alpha=0.6, color='g', label='Data Histogram')
+    # Plot 3: Data histogram with fitted normal distribution
+    plt.subplot(1, 3, 3)
+    plt.hist(data, bins=30, density=True, alpha=0.6, label='Data')
     
-    # Plot the fitted normal distribution
+    # Get final parameters
+    mu_final, sigma_final = params_history[-1]
+    
+    # Plot fitted normal distribution
     x = np.linspace(min(data), max(data), 1000)
-    fitted_pdf = 1/(final_sigma * np.sqrt(2*np.pi)) * np.exp(-(x - final_mu)**2 / (2 * final_sigma**2))
-    plt.plot(x, fitted_pdf, 'r-', linewidth=2, label=f'Fitted Normal: μ={final_mu:.2f}, σ={final_sigma:.2f}')
+    y = (1 / (sigma_final * np.sqrt(2 * np.pi))) * np.exp(-(x - mu_final)**2 / (2 * sigma_final**2))
+    plt.plot(x, y, 'r-', linewidth=2, label=f'Fitted N({mu_final:.2f}, {sigma_final:.2f})')
     
-    # Plot the analytical normal distribution
-    analytical_pdf = 1/(analytical_sigma * np.sqrt(2*np.pi)) * np.exp(-(x - analytical_mu)**2 / (2 * analytical_sigma**2))
-    plt.plot(x, analytical_pdf, 'b--', linewidth=2, label=f'Analytical: μ={analytical_mu:.2f}, σ={analytical_sigma:.2f}')
-    
+    plt.title('Data and Fitted Distribution')
     plt.xlabel('Value')
     plt.ylabel('Density')
-    plt.title('Data Histogram with Fitted Normal Distribution')
     plt.legend()
     plt.grid(True)
     
+    plt.tight_layout()
     plt.show()
+
+def main():
+    # Load data
+    print("Loading data...")
+    data = load_data()
+    
+    # Problem parameters
+    params_init = np.array([0, 1])  # Initial point: mu_0 = 0, sigma_0 = 1
+    eta = 0.01                      # Step size
+    epsilon = 1e-5                  # Convergence threshold
+    
+    print(f"Starting gradient descent with:")
+    print(f"- Initial parameters: mu = {params_init[0]}, sigma = {params_init[1]}")
+    print(f"- Step size (η): {eta}")
+    print(f"- Convergence threshold (ε): {epsilon}")
+    
+    # Run gradient descent
+    params_final, cost_history, params_history = gradient_descent(data, params_init, eta, epsilon)
+    
+    # Display results
+    print("\nFinal solution:")
+    print(f"μ = {params_final[0]:.6f}")
+    print(f"σ = {params_final[1]:.6f}")
+    print(f"Final negative log-likelihood: {cost_history[-1]:.6f}")
+    print(f"Number of iterations: {len(cost_history)}")
+    
+    # Calculate sample statistics for comparison
+    print("\nSample statistics:")
+    print(f"Sample mean: {np.mean(data):.6f}")
+    print(f"Sample standard deviation: {np.std(data, ddof=1):.6f}")
+    
+    # Plot results
+    plot_results(cost_history, params_history, data)
 
 if __name__ == "__main__":
     main()
